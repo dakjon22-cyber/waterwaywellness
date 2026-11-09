@@ -9,4 +9,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping API health endpoint
-        run: curl -sf --max-time 60 https://waterwaywellness.onrender.com/api/healthz || true
+        run: curl -sf --max-time 60 https://waterwaywellness-api.onrender.com/api/healthz || true
