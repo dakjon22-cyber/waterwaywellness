@@ -124,7 +124,7 @@ export default function Home() {
     },
     staleTime: 5 * 60 * 1000,
   });
-  const featuredProducts = (productsData?.data ?? []).slice(0, 4);
+  const featuredProducts = (productsData?.data ?? []).slice(-4);
 
   // Size/variant must be picked on the product page, so both actions route there
   function handleBuyProduct(item: PrintifyProduct) {
