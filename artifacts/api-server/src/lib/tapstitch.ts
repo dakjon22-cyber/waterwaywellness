@@ -44,9 +44,9 @@ const DEFS: TsDef[] = [
     description:
       "Boxy vintage-wash tee with the Waterway Wellness logo. Printed on demand. Sizes S–2XL.",
     colors: [
+            { name: "Sky Blue", slug: "skyblue" },
       { name: "Apricot", slug: "apricot" },
       { name: "Pink", slug: "pink" },
-      { name: "Sky Blue", slug: "skyblue" },
       { name: "Red", slug: "red" },
     ],
     imagePrefix: "logo",
@@ -58,9 +58,9 @@ const DEFS: TsDef[] = [
     description:
       "Boxy vintage-wash tee with the Waterway Wellness emblem. Printed on demand. Sizes S–2XL.",
     colors: [
+            { name: "Pink", slug: "pink" },
       { name: "Black", slug: "black" },
-      { name: "Apricot", slug: "apricot" },
-      { name: "Pink", slug: "pink" },
+      { name: "Apricot", slug: "apricot" },,
     ],
     imagePrefix: "emblem",
   },
