@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { randomUUID } from "crypto";
 import { printify } from "../lib/printify";
+import { tapstitch, isTapstitchId, emailTapstitchOrder, SITE_URL, TAPSTITCH_SHIPPING_COST } from "../lib/tapstitch";
 import { getUncachableStripeClient, getStripePublishableKey } from "../stripeClient";
 import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db";
@@ -9,20 +10,20 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+type CartItem = { product_id: string; variant_id: number; quantity: number };
+
+async function getCatalogProduct(id: string) {
+  return isTapstitchId(id) ? tapstitch.getProduct(id) : printify.getProduct(id);
+}
+
 async function submitOrderToPrintify(stripeSessionId: string): Promise<void> {
   const stripe = await getUncachableStripeClient();
 
-  const session = await stripe.checkout.sessions.retrieve(stripeSessionId, {
-    expand: ["shipping_details", "customer_details"],
-  }) as Awaited<ReturnType<typeof stripe.checkout.sessions.retrieve>> & {
-    shipping_details?: {
-      address?: { country?: string | null; state?: string | null; line1?: string | null; line2?: string | null; city?: string | null; postal_code?: string | null };
-      name?: string | null;
-    } | null;
-  };
+  // Newer Stripe API versions moved shipping details under collected_information.
+  const session = (await stripe.checkout.sessions.retrieve(stripeSessionId)) as any;
 
   if (session.payment_status !== "paid") {
-    logger.info({ stripeSessionId }, "Session not yet paid — skipping Printify submission");
+    logger.info({ stripeSessionId }, "Session not yet paid — skipping fulfillment");
     return;
   }
 
@@ -36,62 +37,91 @@ async function submitOrderToPrintify(stripeSessionId: string): Promise<void> {
     return;
   }
 
-  if (order.printifyOrderId) {
-    logger.info({ orderId: order.id, printifyOrderId: order.printifyOrderId }, "Order already submitted to Printify");
-    return;
-  }
-
-  const shipping = session.shipping_details;
-  const customerEmail = session.customer_details?.email ?? "";
+  const shipping =
+    session.collected_information?.shipping_details ?? session.shipping_details ?? null;
+  const customerEmail: string = session.customer_details?.email ?? "";
 
   if (!shipping?.address || !shipping?.name) {
-    logger.error({ stripeSessionId }, "No shipping address on session — cannot submit to Printify");
+    logger.error({ stripeSessionId }, "No shipping address on session — cannot fulfill");
     return;
   }
 
-  const nameParts = shipping.name.trim().split(/\s+/);
-  const firstName = nameParts[0] ?? "";
-  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : firstName;
+  const items = order.items as CartItem[];
+  const printifyItems = items.filter((i) => !isTapstitchId(i.product_id));
+  const tapstitchItems = items.filter((i) => isTapstitchId(i.product_id));
+  const statusTags = new Set(order.status.split(",").filter(Boolean));
 
-  const items = order.items as Array<{ product_id: string; variant_id: number; quantity: number }>;
+  // Printify: automatic
+  let printifyOrderId = order.printifyOrderId;
+  if (printifyItems.length > 0 && !printifyOrderId) {
+    const nameParts = shipping.name.trim().split(/\s+/);
+    const firstName = nameParts[0] ?? "";
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : firstName;
 
-  logger.info({ orderId: order.id, items }, "Submitting order to Printify");
+    logger.info({ orderId: order.id, printifyItems }, "Submitting order to Printify");
+    const printifyOrder = await printify.createOrder({
+      external_id: order.id,
+      label: `WW-${order.id.slice(0, 8).toUpperCase()}`,
+      line_items: printifyItems.map((item) => ({
+        product_id: item.product_id,
+        variant_id: item.variant_id,
+        quantity: item.quantity,
+      })),
+      shipping_method: 1,
+      send_shipping_notification: true,
+      address_to: {
+        first_name: firstName,
+        last_name: lastName,
+        email: customerEmail,
+        country: shipping.address.country ?? "US",
+        region: shipping.address.state ?? "",
+        address1: shipping.address.line1 ?? "",
+        address2: shipping.address.line2 ?? undefined,
+        city: shipping.address.city ?? "",
+        zip: shipping.address.postal_code ?? "",
+      },
+    });
+    printifyOrderId = printifyOrder.id;
+    statusTags.add("printify_submitted");
+    logger.info({ orderId: order.id, printifyOrderId }, "Order submitted to Printify");
+  }
 
-  const printifyOrder = await printify.createOrder({
-    external_id: order.id,
-    label: `WW-${order.id.slice(0, 8).toUpperCase()}`,
-    line_items: items.map((item) => ({
-      product_id: item.product_id,
-      variant_id: item.variant_id,
-      quantity: item.quantity,
-    })),
-    shipping_method: 1,
-    send_shipping_notification: true,
-    address_to: {
-      first_name: firstName,
-      last_name: lastName,
-      email: customerEmail,
-      country: shipping.address.country ?? "US",
-      region: shipping.address.state ?? "",
-      address1: shipping.address.line1 ?? "",
-      address2: shipping.address.line2 ?? undefined,
-      city: shipping.address.city ?? "",
-      zip: shipping.address.postal_code ?? "",
-    },
-  });
+  // Tapstitch: emailed for manual placement
+  if (tapstitchItems.length > 0 && !statusTags.has("tapstitch_emailed")) {
+    const a = shipping.address;
+    await emailTapstitchOrder({
+      orderId: order.id,
+      customerName: shipping.name,
+      customerEmail,
+      address: [a.line1, a.line2, `${a.city ?? ""}, ${a.state ?? ""} ${a.postal_code ?? ""}`, a.country]
+        .filter(Boolean)
+        .join("\n"),
+      items: tapstitchItems.map((i) => {
+        const p = tapstitch.getProduct(i.product_id);
+        const v = p.variants.find((x) => x.id === i.variant_id);
+        return {
+          title: p.title,
+          variant: v?.title ?? String(i.variant_id),
+          quantity: i.quantity,
+          tapstitchProductId: tapstitch.tapstitchProductId(i.product_id),
+        };
+      }),
+      amountPaid: `$${((session.amount_total ?? 0) / 100).toFixed(2)}`,
+    });
+    statusTags.add("tapstitch_emailed");
+  }
 
+  statusTags.delete("pending");
   await db
     .update(ordersTable)
     .set({
-      status: "submitted",
-      printifyOrderId: printifyOrder.id,
+      status: [...statusTags].join(",") || "submitted",
+      printifyOrderId,
       customerEmail,
       shippingAddress: shipping.address,
       updatedAt: new Date(),
     })
     .where(eq(ordersTable.id, order.id));
-
-  logger.info({ orderId: order.id, printifyOrderId: printifyOrder.id }, "Order successfully submitted to Printify");
 }
 
 router.get("/checkout/config", async (req, res): Promise<void> => {
@@ -159,7 +189,7 @@ async function computeAtCostDiscount(
 ): Promise<number> {
   const products = await Promise.all(
     items.map(async (item) => {
-      const product = await printify.getProduct(item.product_id);
+      const product = await getCatalogProduct(item.product_id);
       const variant = product.variants.find((v) => v.id === item.variant_id);
       if (!variant) throw new Error(`Variant ${item.variant_id} not found`);
       return { product, variant, quantity: item.quantity };
@@ -175,7 +205,9 @@ async function computeAtCostDiscount(
 
   let firstItemDone = false;
   for (const { product, quantity } of products) {
-    const shipping = PRINTIFY_SHIPPING[(product as any).blueprint_id] ?? DEFAULT_SHIPPING;
+    const shipping = isTapstitchId(product.id)
+      ? { first: TAPSTITCH_SHIPPING_COST, additional: TAPSTITCH_SHIPPING_COST }
+      : PRINTIFY_SHIPPING[(product as any).blueprint_id] ?? DEFAULT_SHIPPING;
     if (!firstItemDone) {
       totalDiscount += shipping.first;
       totalDiscount += shipping.additional * (quantity - 1);
@@ -202,12 +234,11 @@ router.post("/checkout/embedded-session", async (req, res): Promise<void> => {
 
     const stripe = await getUncachableStripeClient();
 
-    const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
-    const baseUrl = domain ? `https://${domain}` : "http://localhost";
+    const baseUrl = SITE_URL;
 
     const lineItems = await Promise.all(
       items.map(async (item) => {
-        const product = await printify.getProduct(item.product_id);
+        const product = await getCatalogProduct(item.product_id);
         const variant = product.variants.find((v) => v.id === item.variant_id);
         if (!variant) throw new Error(`Variant ${item.variant_id} not found`);
 
@@ -322,7 +353,7 @@ router.post("/checkout/session", async (req, res): Promise<void> => {
 
     const lineItems = await Promise.all(
       items.map(async (item) => {
-        const product = await printify.getProduct(item.product_id);
+        const product = await getCatalogProduct(item.product_id);
         const variant = product.variants.find((v) => v.id === item.variant_id);
         if (!variant) throw new Error(`Variant ${item.variant_id} not found`);
 
@@ -337,7 +368,7 @@ router.post("/checkout/session", async (req, res): Promise<void> => {
             product_data: {
               name: `${product.title} — ${variant.title}`,
               description: product.description?.slice(0, 500) || undefined,
-              images: image ? [image.src] : [],
+              images: image ? [image.src.startsWith("http") ? image.src : `${baseUrl}${image.src}`] : [],
             },
           },
           quantity: item.quantity,
@@ -346,8 +377,7 @@ router.post("/checkout/session", async (req, res): Promise<void> => {
     );
 
     const orderId = randomUUID();
-    const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
-    const baseUrl = domain ? `https://${domain}` : "http://localhost";
+    const baseUrl = SITE_URL;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],

@@ -86,6 +86,10 @@ const SWATCH_COLORS: Record<string, string> = {
   "sport grey": "#9da2a3",
   ivory: "#f5efdf",
   seafoam: "#a4d9c5",
+  apricot: "#e3dccb",
+  pink: "#fdd6d9",
+  "sky blue": "#7cacd7",
+  red: "#b42c37",
 };
 
 function swatchColor(title: string): string {

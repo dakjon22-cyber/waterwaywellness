@@ -17,6 +17,12 @@ Live at **waterwaywellness.co**. Edit code, push to `main`, and it deploys autom
 - Discount code **ZINGO** = at-cost pricing. It's entered in the cart or via "Have a discount code?" in the Buy Now popup. Stripe's own promo field is turned off on purpose.
 - Variant matching uses `options.includes(...)`, not position, because Printify's variant option order is inconsistent.
 
+## Tapstitch products (manual fulfillment)
+- Tapstitch has no public API. Its three tees are defined in `artifacts/api-server/src/lib/tapstitch.ts` (ids start with `ts_`), served alongside Printify products, and use the same Stripe checkout. Price is the `PRICE` constant.
+- Images: `artifacts/waterway-wellness/public/tapstitch/`.
+- When a paid order contains Tapstitch items, the backend emails the order (sizes, colors, ship-to address) to `waterwaywellnessco@gmail.com` via FormSubmit. Someone then places it by hand in the Tapstitch dashboard. Printify items in the same order still go to Printify automatically.
+- Site URL for Stripe redirects comes from `SITE_URL` (defaults to https://waterwaywellness.co).
+
 ## Photos
 - Real merch photos: `attached_assets/merch/`, mapped to product + color in `REAL_PHOTOS` in `artifacts/waterway-wellness/src/pages/shop-product.tsx`.
 - Home page photo strip: `artifacts/waterway-wellness/public/community/` (listed in `PHOTOS` in `src/pages/home.tsx`).

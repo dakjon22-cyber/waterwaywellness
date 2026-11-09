@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { printify } from "../lib/printify";
+import { tapstitch, isTapstitchId } from "../lib/tapstitch";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -53,9 +54,13 @@ router.get("/printify/image", async (req, res): Promise<void> => {
 
 router.get("/printify/products", async (req, res) => {
   try {
-    const products = await printify.listProducts();
-    const rewritten = products.map((p) => rewriteProductImages(p));
-    res.json({ data: rewritten });
+    let rewritten: Awaited<ReturnType<typeof printify.listProducts>> = [];
+    try {
+      rewritten = (await printify.listProducts()).map((p) => rewriteProductImages(p));
+    } catch (err) {
+      req.log.error({ err }, "Printify unavailable — serving Tapstitch products only");
+    }
+    res.json({ data: [...rewritten, ...tapstitch.listProducts()] });
   } catch (err: any) {
     req.log.error({ err }, "Failed to list Printify products");
     res.status(500).json({ error: err.message ?? "Failed to fetch products" });
@@ -64,7 +69,12 @@ router.get("/printify/products", async (req, res) => {
 
 router.get("/printify/products/:productId", async (req, res): Promise<void> => {
   try {
-    const product = await printify.getProduct(req.params.productId);
+    const id = req.params.productId;
+    if (isTapstitchId(id)) {
+      res.json({ data: tapstitch.getProduct(id) });
+      return;
+    }
+    const product = await printify.getProduct(id);
     const rewritten = rewriteProductImages(product);
     res.json({ data: rewritten });
   } catch (err: any) {
