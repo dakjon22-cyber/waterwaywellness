@@ -8,7 +8,7 @@ import { logger } from "./logger";
 export const SITE_URL = process.env.SITE_URL || "https://waterwaywellness.co";
 export const TAPSTITCH_ORDER_EMAIL = process.env.TAPSTITCH_ORDER_EMAIL || "waterwaywellnessco@gmail.com";
 
-const PRICE = 3200; // sale price, cents
+const PRICE = 2500; // sale price, cents
 const COST = 1597; // Tapstitch product + print cost, cents
 export const TAPSTITCH_SHIPPING_COST = 562; // Tapstitch shipping per item, cents
 
