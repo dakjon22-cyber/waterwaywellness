@@ -1,7 +1,7 @@
 {
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://waterwaywellness.onrender.com/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://https://waterwaywellness-api.onrender.com/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
