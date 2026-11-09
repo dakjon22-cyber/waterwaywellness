@@ -164,7 +164,13 @@ export async function emailTapstitchOrder(order: {
 
   const resp = await fetch(`https://formsubmit.co/ajax/${TAPSTITCH_ORDER_EMAIL}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    // FormSubmit ties activation to the sending site, so identify as the live site.
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Referer: `${SITE_URL}/`,
+      Origin: SITE_URL,
+    },
     body: JSON.stringify({
       _subject: `New Tapstitch order to place — WW-${order.orderId.slice(0, 8).toUpperCase()}`,
       _template: "box",
