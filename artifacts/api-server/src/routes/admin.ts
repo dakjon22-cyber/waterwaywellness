@@ -111,7 +111,7 @@ async function visitStats() {
   };
   const [today, d7, d30] = await Promise.all([win(1), win(7), win(30)]);
   const daily = (await pool.query(
-    `SELECT to_char(date_trunc('day', created AT TIME ZONE 'America/New_York'), 'YYYY-MM-DD') day, count(DISTINCT vid)::int visitors
+    `SELECT to_char(date_trunc('day', created AT TIME ZONE 'America/New_York'), 'YYYY-MM-DD') AS "day", count(DISTINCT vid)::int visitors
      FROM ww_visits WHERE created > now() - interval '60 days' GROUP BY 1`)).rows as { day: string; visitors: number }[];
   return { today, d7, d30, daily };
 }
