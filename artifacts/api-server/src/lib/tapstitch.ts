@@ -1,5 +1,4 @@
 import type { PrintifyProduct, PrintifyVariant, PrintifyImage } from "./printify";
-import { logger } from "./logger";
 
 // Tapstitch has no public API, so these products are defined here and served in the
 // same shape as Printify products. Orders for them are emailed for manual fulfillment.
@@ -60,7 +59,7 @@ const DEFS: TsDef[] = [
     colors: [
             { name: "Pink", slug: "pink" },
       { name: "Black", slug: "black" },
-      { name: "Apricot", slug: "apricot" },,
+      { name: "Apricot", slug: "apricot" },
     ],
     imagePrefix: "emblem",
   },
@@ -146,14 +145,17 @@ export const tapstitch = {
  * Uses FormSubmit (no API key). The first email to a new address sends an
  * activation link that must be clicked once.
  */
-export async function emailTapstitchOrder(order: {
+type TsOrder = {
   orderId: string;
   customerName: string;
   customerEmail: string;
   address: string;
   items: Array<{ title: string; variant: string; quantity: number; tapstitchProductId?: string }>;
   amountPaid: string;
-}): Promise<void> {
+};
+
+/** The order email's fields. It is sent from a browser: FormSubmit's bot check blocks servers. */
+export function tapstitchEmailFields(order: TsOrder): Record<string, string> {
   const lines = order.items
     .map(
       (i) =>
@@ -161,33 +163,16 @@ export async function emailTapstitchOrder(order: {
         (i.tapstitchProductId ? ` (Tapstitch design ID ${i.tapstitchProductId})` : "")
     )
     .join("\n");
-
-  const resp = await fetch(`https://formsubmit.co/ajax/${TAPSTITCH_ORDER_EMAIL}`, {
-    method: "POST",
-    // FormSubmit ties activation to the sending site, so identify as the live site.
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Referer: `${SITE_URL}/`,
-      Origin: SITE_URL,
-    },
-    body: JSON.stringify({
-      _subject: `New Tapstitch order to place — WW-${order.orderId.slice(0, 8).toUpperCase()}`,
-      _template: "box",
-      _captcha: "false",
-      "Order number": `WW-${order.orderId.slice(0, 8).toUpperCase()}`,
-      "Items to order on Tapstitch": lines,
-      "Ship to": `${order.customerName}\n${order.address}`,
-      "Customer email": order.customerEmail,
-      "Customer paid": order.amountPaid,
-      "Next step": "Place this order in Tapstitch: Designs → find the design → Add to cart → enter the ship-to address above.",
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  const body = await resp.text().catch(() => "");
-  if (!resp.ok) {
-    throw new Error(`Order email failed: ${resp.status} ${body.slice(0, 200)}`);
-  }
-  logger.info({ orderId: order.orderId, body: body.slice(0, 200) }, "Tapstitch order email sent");
+  const num = `WW-${order.orderId.slice(0, 8).toUpperCase()}`;
+  return {
+    _subject: `New Tapstitch order to place — ${num}`,
+    _template: "box",
+    _captcha: "false",
+    "Order number": num,
+    "Items to order on Tapstitch": lines,
+    "Ship to": `${order.customerName}\n${order.address}`,
+    "Customer email": order.customerEmail,
+    "Customer paid": order.amountPaid,
+    "Next step": "Place this order in Tapstitch: Designs → find the design → Add to cart → enter the ship-to address above.",
+  };
 }

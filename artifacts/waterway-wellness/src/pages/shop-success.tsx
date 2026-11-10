@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { Nav } from "@/components/nav";
+import { sendTapstitchEmail } from "@/lib/tapstitch-email";
 
 export default function ShopSuccess() {
   const search = useSearch();
@@ -14,7 +15,9 @@ export default function ShopSuccess() {
     queryFn: async () => {
       const resp = await fetch(`/api/checkout/session/${sessionId}`);
       if (!resp.ok) throw new Error("Failed to load order");
-      return resp.json();
+      const json = await resp.json();
+      void sendTapstitchEmail(sessionId!).catch(() => {});
+      return json;
     },
     enabled: !!sessionId,
     retry: false,

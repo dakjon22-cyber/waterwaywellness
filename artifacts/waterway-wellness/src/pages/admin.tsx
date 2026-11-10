@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { sendTapstitchEmail } from "@/lib/tapstitch-email";
 
 type Win = { days: number; started: number; paid: number; abandoned: number; open: number; conversion: number | null; revenue: number; tax: number };
 type Top = { name: string; count: number }[];
@@ -43,9 +44,9 @@ const LINKS = [
   { label: "The live site", sub: "waterwaywellness.co", href: "https://waterwaywellness.co" },
 ];
 
-const card = "rounded-2xl border border-white/10 bg-white/[0.04] p-4";
-const tag = "text-[11px] uppercase tracking-[0.18em] text-emerald-300/80 mb-2";
-const mute = "text-white/50";
+const card = "rounded-2xl border border-white/15 bg-black/35 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.35)] p-4";
+const tag = "text-[11px] uppercase tracking-[0.18em] text-emerald-300 mb-2";
+const mute = "text-white/60";
 const btn = "rounded-full bg-emerald-400 text-black font-semibold px-4 min-h-[40px] disabled:opacity-50";
 
 function Stats({ rows }: { rows: [React.ReactNode, React.ReactNode][] }) {
@@ -77,6 +78,18 @@ function Bars({ days, k, money }: { days: Day[]; k: "visitors" | "revenue"; mone
           <div className={`w-full rounded-t ${k === "revenue" ? "bg-sky-300/80" : "bg-emerald-400/80"}`} style={{ height: `${Math.max(d[k] ? 4 : 1, (d[k] / max) * 100)}%` }} />
         </div>
       ))}
+    </div>
+  );
+}
+
+function Backdrop() {
+  return (
+    <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden bg-[#06110c]">
+      <img src="/community/photo9.jpg" alt="" className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-70 saturate-150"
+        style={{ animation: "kbZoomIn 40s ease-in-out infinite alternate" }} />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#06110c]/40 via-[#06110c]/70 to-[#06110c]" />
+      <div className="absolute -top-40 -left-40 w-[36rem] h-[36rem] rounded-full bg-emerald-400/25 blur-3xl" />
+      <div className="absolute -bottom-40 -right-40 w-[36rem] h-[36rem] rounded-full bg-sky-400/20 blur-3xl" />
     </div>
   );
 }
@@ -149,6 +162,25 @@ export default function Admin() {
     try { localStorage.removeItem("ww_admin_cache"); } catch { /* fine */ }
     setData(null); setState("login");
   }
+  const sending = useRef(new Set<string>());
+  async function sendEmail(sessionId: string, quiet = false) {
+    if (sending.current.has(sessionId)) return;
+    sending.current.add(sessionId); setBusy(sessionId);
+    try {
+      const r = await sendTapstitchEmail(sessionId);
+      if (!quiet || !r.sent) setMsg(r.sent ? "Tapstitch order emailed to waterwaywellnessco@gmail.com." : `Tapstitch email didn't send: ${r.message ?? "nothing to send"}`);
+      if (r.sent && quiet) setMsg("Sent the waiting Tapstitch order emails to waterwaywellnessco@gmail.com.");
+    } catch (e) { setMsg(`Tapstitch email didn't send: ${(e as Error).message}`); }
+    sending.current.delete(sessionId); setBusy(null);
+  }
+  useEffect(() => {
+    if (!data || stale) return;
+    const waiting = (data.orders ?? []).filter((o) => o.known && o.hasTapstitch && !o.tapstitchEmailed && !o.test);
+    if (!waiting.length) return;
+    (async () => { for (const o of waiting) await sendEmail(o.sessionId, true); await load(); })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, stale]);
+
   async function retry(sessionId: string) {
     setBusy(sessionId);
     const r = await fetch("/api/admin/retry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) });
@@ -156,12 +188,12 @@ export default function Admin() {
     setBusy(null); await load();
   }
 
-  const shell = "min-h-screen bg-[#0b1410] text-white px-4 sm:px-8 py-8 max-w-5xl mx-auto";
+  const shell = "relative min-h-screen text-white px-4 sm:px-8 py-8 max-w-5xl mx-auto";
   if (state === "login") {
     return (
-      <main className={shell}>
+      <main className={shell}><Backdrop />
         <p className={tag}>Waterway Wellness</p>
-        <h1 className="text-3xl font-bold mb-2">Sign in</h1>
+        <h1 className="text-4xl font-bold mb-2" style={{ fontFamily: "SquidBoy, sans-serif" }}>Sign in</h1>
         <p className={`${mute} mb-6`}>You'll only need to do this once on this device.</p>
         <form onSubmit={signIn} className="flex gap-2 max-w-md">
           <input type="password" autoComplete="current-password" placeholder="Dashboard password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus
@@ -172,7 +204,7 @@ export default function Admin() {
       </main>
     );
   }
-  if (state === "loading" || !data) return <main className={shell}><p className={mute}>Loading… (the server can take up to a minute to wake up)</p></main>;
+  if (state === "loading" || !data) return <main className={shell}><Backdrop /><p className={mute}>Loading… (the server can take up to a minute to wake up)</p></main>;
 
   const R = RANGES.find((x) => x.days === range)!;
   const sales = data.sales ? pick(data.sales, range) : null;
@@ -186,11 +218,11 @@ export default function Admin() {
   const needsAttention = (data.orders ?? []).filter((o) => stageOf(o).some((b) => b.bad));
 
   return (
-    <main className={shell}>
+    <main className={shell}><Backdrop />
       <header className="flex items-start justify-between gap-4 mb-6">
         <div>
           <p className={tag}>Waterway Wellness</p>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-wide" style={{ fontFamily: "SquidBoy, sans-serif" }}>Dashboard</h1>
           <p className={`${mute} text-sm`}>Updated {new Date(data.generatedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}{stale ? " · refreshing…" : ""}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -201,7 +233,7 @@ export default function Admin() {
       {msg && <p className="mb-4 rounded-xl bg-white/10 p-3 text-sm">{msg}</p>}
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="inline-flex rounded-full bg-white/10 p-1" role="tablist">
+        <div className="inline-flex rounded-full bg-black/40 backdrop-blur-xl border border-white/15 p-1" role="tablist">
           {RANGES.map((r) => (
             <button key={r.days} role="tab" aria-selected={range === r.days} onClick={() => setRange(r.days)}
               className={`rounded-full px-4 py-1.5 text-sm ${range === r.days ? "bg-white text-black font-semibold" : "text-white/70"}`}>{r.label}</button>
@@ -228,7 +260,7 @@ export default function Admin() {
       </div>
       {(data.salesError || data.visitsError) && <p className="text-rose-300 text-sm mb-3">{[data.salesError && `Stripe: ${data.salesError}`, data.visitsError && `Visits: ${data.visitsError}`].filter(Boolean).join(" · ")}</p>}
 
-      <nav className="flex gap-1 overflow-x-auto border-b border-white/10 mb-5" role="tablist">
+      <nav className="flex gap-1 overflow-x-auto border-b border-white/15 mb-5" role="tablist">
         {TABS.map((t) => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
             className={`px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px ${tab === t.id ? "border-emerald-400 text-white font-semibold" : "border-transparent text-white/60"}`}>
@@ -285,9 +317,14 @@ export default function Admin() {
                     <p className="text-sm my-2">{o.items}</p>
                     {bits.map((b) => <p key={b.text} className={`text-sm ${b.bad ? "text-rose-300" : "text-emerald-300"}`}>{b.text}</p>)}
                     {o.shipments.map((s) => <p key={s.number} className="text-sm">{s.carrier} <a className="underline" href={s.url} target="_blank" rel="noopener">{s.number}</a></p>)}
-                    {o.known && ((o.hasPrintify && !o.printifyOrderId) || (o.hasTapstitch && !o.tapstitchEmailed)) && (
-                      <button className={`${btn} mt-3`} disabled={busy === o.sessionId} onClick={() => retry(o.sessionId)}>{busy === o.sessionId ? "Sending…" : "Retry"}</button>
-                    )}
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {o.known && o.hasPrintify && !o.printifyOrderId && (
+                        <button className={btn} disabled={busy === o.sessionId} onClick={() => retry(o.sessionId)}>{busy === o.sessionId ? "Sending…" : "Retry Printify"}</button>
+                      )}
+                      {o.known && o.hasTapstitch && !o.tapstitchEmailed && (
+                        <button className={btn} disabled={busy === o.sessionId} onClick={() => sendEmail(o.sessionId)}>{busy === o.sessionId ? "Sending…" : "Send Tapstitch email"}</button>
+                      )}
+                    </div>
                   </div>
                 );
               })}

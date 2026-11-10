@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { randomUUID } from "crypto";
 import { printify } from "../lib/printify";
-import { tapstitch, isTapstitchId, emailTapstitchOrder, SITE_URL, TAPSTITCH_SHIPPING_COST } from "../lib/tapstitch";
+import { tapstitch, isTapstitchId, tapstitchEmailFields, TAPSTITCH_ORDER_EMAIL, SITE_URL, TAPSTITCH_SHIPPING_COST } from "../lib/tapstitch";
 import { getUncachableStripeClient, getStripePublishableKey } from "../stripeClient";
 import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db";
@@ -84,31 +84,6 @@ async function submitOrderToPrintify(stripeSessionId: string): Promise<void> {
     printifyOrderId = printifyOrder.id;
     statusTags.add("printify_submitted");
     logger.info({ orderId: order.id, printifyOrderId }, "Order submitted to Printify");
-  }
-
-  // Tapstitch: emailed for manual placement
-  if (tapstitchItems.length > 0 && !statusTags.has("tapstitch_emailed")) {
-    const a = shipping.address;
-    await emailTapstitchOrder({
-      orderId: order.id,
-      customerName: shipping.name,
-      customerEmail,
-      address: [a.line1, a.line2, `${a.city ?? ""}, ${a.state ?? ""} ${a.postal_code ?? ""}`, a.country]
-        .filter(Boolean)
-        .join("\n"),
-      items: tapstitchItems.map((i) => {
-        const p = tapstitch.getProduct(i.product_id);
-        const v = p.variants.find((x) => x.id === i.variant_id);
-        return {
-          title: p.title,
-          variant: v?.title ?? String(i.variant_id),
-          quantity: i.quantity,
-          tapstitchProductId: tapstitch.tapstitchProductId(i.product_id),
-        };
-      }),
-      amountPaid: `$${((session.amount_total ?? 0) / 100).toFixed(2)}`,
-    });
-    statusTags.add("tapstitch_emailed");
   }
 
   statusTags.delete("pending");
@@ -461,6 +436,52 @@ router.get("/checkout/session/:sessionId", async (req, res): Promise<void> => {
   } catch (err: any) {
     req.log.error({ err }, "Failed to get session");
     res.status(500).json({ error: err.message ?? "Failed to fetch session" });
+  }
+});
+
+/** The Tapstitch order email for a paid session, or null if there's nothing (left) to send. */
+async function pendingTapstitchEmail(stripeSessionId: string): Promise<Record<string, string> | null> {
+  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.stripeSessionId, stripeSessionId));
+  if (!order || order.status.split(",").includes("tapstitch_emailed")) return null;
+  const items = (order.items as CartItem[]).filter((i) => isTapstitchId(i.product_id));
+  if (items.length === 0) return null;
+  const stripe = await getUncachableStripeClient();
+  const session = (await stripe.checkout.sessions.retrieve(stripeSessionId)) as any;
+  if (session.payment_status !== "paid") return null;
+  const shipping = session.collected_information?.shipping_details ?? session.shipping_details ?? null;
+  const a = shipping?.address ?? {};
+  return tapstitchEmailFields({
+    orderId: order.id,
+    customerName: shipping?.name ?? session.customer_details?.name ?? "",
+    customerEmail: session.customer_details?.email ?? "",
+    address: [a.line1, a.line2, `${a.city ?? ""}, ${a.state ?? ""} ${a.postal_code ?? ""}`, a.country].filter(Boolean).join("\n"),
+    items: items.map((i) => {
+      const p = tapstitch.getProduct(i.product_id);
+      const v = p.variants.find((x) => x.id === i.variant_id);
+      return { title: p.title, variant: v?.title ?? String(i.variant_id), quantity: i.quantity, tapstitchProductId: tapstitch.tapstitchProductId(i.product_id) };
+    }),
+    amountPaid: `$${((session.amount_total ?? 0) / 100).toFixed(2)}`,
+  });
+}
+
+router.get("/checkout/tapstitch-email/:sessionId", async (req, res): Promise<void> => {
+  try {
+    res.json({ to: TAPSTITCH_ORDER_EMAIL, fields: await pendingTapstitchEmail(req.params.sessionId) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/checkout/tapstitch-email/:sessionId/sent", async (req, res): Promise<void> => {
+  try {
+    const [order] = await db.select().from(ordersTable).where(eq(ordersTable.stripeSessionId, req.params.sessionId));
+    if (!order) { res.status(404).end(); return; }
+    const tags = new Set(order.status.split(",").filter(Boolean));
+    tags.add("tapstitch_emailed");
+    await db.update(ordersTable).set({ status: [...tags].join(",") }).where(eq(ordersTable.id, order.id));
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
