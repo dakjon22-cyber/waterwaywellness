@@ -137,6 +137,11 @@ export const printify = {
     );
   },
 
+  async getOrder(orderId: string): Promise<any> {
+    const { shopId } = getCredentials();
+    return printifyFetch<any>(`/shops/${shopId}/orders/${orderId}.json`);
+  },
+
   async createOrder(order: PrintifyOrderPayload): Promise<{ id: string }> {
     const { shopId } = getCredentials();
     return printifyFetch<{ id: string }>(

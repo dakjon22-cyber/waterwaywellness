@@ -1,4 +1,7 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { useEffect } from "react";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { track } from "@/lib/track";
+import Admin from "@/pages/admin";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,8 +16,11 @@ import { CartDrawer } from "@/components/cart-drawer";
 const queryClient = new QueryClient();
 
 function Router() {
+  const [location] = useLocation();
+  useEffect(() => { track(location); }, [location]);
   return (
     <Switch>
+      <Route path="/admin" component={Admin} />
       <Route path="/" component={Home} />
       <Route path="/shop" component={Shop} />
       <Route path="/shop/success" component={ShopSuccess} />
