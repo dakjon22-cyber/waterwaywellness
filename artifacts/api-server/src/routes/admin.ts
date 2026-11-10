@@ -13,7 +13,7 @@ const router: IRouter = Router();
 // ---------- sign-in ----------
 // The dashboard password is stored only as a SHA-256 hash. Setting ADMIN_SECRET on the
 // server replaces it (and signs everyone out).
-const BUILT_IN_HASH = "4e1a780336f4a7331d9b9c9b79c8407d7b2bf3ddeb895ea667707c6b4e7b3933";
+const BUILT_IN_HASH = "bd726b2566f49be2caccb364fd8cc2af63324492525b8b328e2a263473252d3b";
 const COOKIE = "ww_admin";
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const passHash = () => (process.env.ADMIN_SECRET ? sha(process.env.ADMIN_SECRET) : BUILT_IN_HASH);
