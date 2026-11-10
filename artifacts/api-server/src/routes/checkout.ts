@@ -217,9 +217,8 @@ router.post("/checkout/embedded-session", async (req, res): Promise<void> => {
         const variant = product.variants.find((v) => v.id === item.variant_id);
         if (!variant) throw new Error(`Variant ${item.variant_id} not found`);
 
-        const image = product.images.find(
-          (img) => img.variant_ids.includes(item.variant_id) || img.is_default
-        );
+        const image = product.images.find((img) => img.variant_ids.includes(item.variant_id)) ??
+          product.images.find((img) => img.is_default);
 
         return {
           price_data: {
@@ -332,9 +331,8 @@ router.post("/checkout/session", async (req, res): Promise<void> => {
         const variant = product.variants.find((v) => v.id === item.variant_id);
         if (!variant) throw new Error(`Variant ${item.variant_id} not found`);
 
-        const image = product.images.find(
-          (img) => img.variant_ids.includes(item.variant_id) || img.is_default
-        );
+        const image = product.images.find((img) => img.variant_ids.includes(item.variant_id)) ??
+          product.images.find((img) => img.is_default);
 
         return {
           price_data: {
