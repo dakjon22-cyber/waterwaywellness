@@ -82,6 +82,35 @@ function Bars({ days, k, money }: { days: Day[]; k: "visitors" | "revenue"; mone
   );
 }
 
+// Signed-in token, kept on this device as a backup to the cookie.
+const TOKEN_KEY = "ww_admin_token";
+function api(path: string, init: RequestInit = {}) {
+  let t = "";
+  try { t = localStorage.getItem(TOKEN_KEY) ?? ""; } catch { /* fine */ }
+  return fetch(path, { cache: "no-store", credentials: "same-origin", ...init, headers: { ...(init.headers ?? {}), ...(t ? { "x-admin-token": t } : {}) } });
+}
+
+/** Lets the dashboard install as its own app (Share → Add to Home Screen). */
+function useAppInstall() {
+  useEffect(() => {
+    const add = (tag: string, attrs: Record<string, string>) => {
+      const el = document.createElement(tag);
+      Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+      el.setAttribute("data-ww-admin", "");
+      document.head.appendChild(el);
+    };
+    document.querySelectorAll('link[rel="manifest"], link[rel="apple-touch-icon"]').forEach((e) => e.remove());
+    add("link", { rel: "manifest", href: "/admin.webmanifest" });
+    add("link", { rel: "apple-touch-icon", href: "/apple-touch-icon.png" });
+    add("meta", { name: "apple-mobile-web-app-capable", content: "yes" });
+    add("meta", { name: "mobile-web-app-capable", content: "yes" });
+    add("meta", { name: "apple-mobile-web-app-title", content: "WW Dashboard" });
+    add("meta", { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" });
+    add("meta", { name: "theme-color", content: "#06110c" });
+    return () => document.querySelectorAll("[data-ww-admin]").forEach((e) => e.remove());
+  }, []);
+}
+
 function Backdrop() {
   return (
     <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden bg-[#06110c]">
@@ -108,6 +137,7 @@ function stageOf(o: Order) {
 }
 
 export default function Admin() {
+  useAppInstall();
   const [data, setData] = useState<Summary | null>(null);
   const [state, setState] = useState<"loading" | "login" | "ready">("loading");
   const [pw, setPw] = useState("");
@@ -130,7 +160,7 @@ export default function Admin() {
   }, []);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/admin/summary", { cache: "no-store" });
+    const res = await api("/api/admin/summary");
     if (res.status === 401) return setState("login");
     if (!res.ok) { setMsg(`Couldn't load (${res.status}). The server may be waking up — try Refresh in a minute.`); return setState("ready"); }
     const d = (await res.json()) as Summary;
@@ -145,7 +175,7 @@ export default function Admin() {
   useEffect(() => {
     if (state !== "ready") return;
     let stop = false;
-    const tick = async () => { try { const r = await fetch("/api/admin/live", { cache: "no-store" }); if (r.ok && !stop) setLive(await r.json()); } catch { /* next */ } };
+    const tick = async () => { try { const r = await api("/api/admin/live"); if (r.ok && !stop) setLive(await r.json()); } catch { /* next */ } };
     void tick();
     const id = setInterval(tick, 20_000);
     return () => { stop = true; clearInterval(id); };
@@ -155,10 +185,12 @@ export default function Admin() {
     e.preventDefault(); setMsg(null);
     const res = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) });
     if (!res.ok) return setMsg("That password didn't work.");
+    try { const { token } = await res.json(); if (token) localStorage.setItem(TOKEN_KEY, token); } catch { /* fine */ }
     setPw(""); setState("loading"); await load();
   }
   async function signOut() {
     await fetch("/api/admin/login", { method: "DELETE" });
+    try { localStorage.removeItem(TOKEN_KEY); } catch { /* fine */ }
     try { localStorage.removeItem("ww_admin_cache"); } catch { /* fine */ }
     setData(null); setState("login");
   }
@@ -183,12 +215,12 @@ export default function Admin() {
 
   async function retry(sessionId: string) {
     setBusy(sessionId);
-    const r = await fetch("/api/admin/retry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) });
+    const r = await api("/api/admin/retry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) });
     setMsg(r.ok ? "Sent again. Refreshing…" : `Retry failed: ${(await r.json().catch(() => ({}))).error ?? r.status}`);
     setBusy(null); await load();
   }
 
-  const shell = "relative min-h-screen text-white px-4 sm:px-8 py-8 max-w-5xl mx-auto";
+  const shell = "relative min-h-screen text-white px-4 sm:px-8 py-8 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))] max-w-5xl mx-auto";
   if (state === "login") {
     return (
       <main className={shell}><Backdrop />

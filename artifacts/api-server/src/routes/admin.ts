@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { pool, db, ordersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -22,9 +22,15 @@ const same = (a: string, b: string) => {
   const x = Buffer.from(a), y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 };
-function isAdmin(req: Request): boolean {
+// Browsers cap cookies at ~400 days, so every signed-in request renews it: stay signed in forever.
+// The token is also kept in the device's storage and sent as a header, as a backup.
+const cookieFor = (v: string, age: number) => `${COOKIE}=${v}; Path=/; Max-Age=${age}; HttpOnly; Secure; SameSite=Lax`;
+function isAdmin(req: Request, res?: Response): boolean {
   const c = (req.headers.cookie ?? "").split(/;\s*/).find((p) => p.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-  return !!c && same(c, token());
+  const h = req.headers["x-admin-token"];
+  const ok = (!!c && same(c, token())) || (typeof h === "string" && same(h, token()));
+  if (ok && res && !res.headersSent) res.setHeader("Set-Cookie", cookieFor(token(), 34560000));
+  return ok;
 }
 
 router.post("/admin/login", async (req, res) => {
@@ -34,11 +40,11 @@ router.post("/admin/login", async (req, res) => {
     res.status(401).json({ error: "Wrong password" });
     return;
   }
-  res.setHeader("Set-Cookie", `${COOKIE}=${token()}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict`);
-  res.json({ ok: true });
+  res.setHeader("Set-Cookie", cookieFor(token(), 34560000));
+  res.json({ ok: true, token: token() });
 });
 router.delete("/admin/login", (_req, res) => {
-  res.setHeader("Set-Cookie", `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
+  res.setHeader("Set-Cookie", cookieFor("", 0));
   res.json({ ok: true });
 });
 
@@ -86,7 +92,7 @@ router.post("/track", async (req, res) => {
 });
 
 router.get("/admin/live", async (req, res) => {
-  if (!isAdmin(req)) { res.status(401).end(); return; }
+  if (!isAdmin(req, res)) { res.status(401).end(); return; }
   try {
     await ensureTable();
     const now = await pool.query(`SELECT count(DISTINCT vid)::int n FROM ww_visits WHERE created > now() - interval '5 minutes'`);
@@ -205,7 +211,7 @@ async function productStats() {
 }
 
 router.get("/admin/summary", async (req, res) => {
-  if (!isAdmin(req)) { res.status(401).json({ error: "Sign in" }); return; }
+  if (!isAdmin(req, res)) { res.status(401).json({ error: "Sign in" }); return; }
   const [v, s, p] = await Promise.allSettled([visitStats(), salesStats(), productStats()]);
   const visits = v.status === "fulfilled" ? v.value : null;
   const sales = s.status === "fulfilled" ? s.value : null;
@@ -228,7 +234,7 @@ router.get("/admin/summary", async (req, res) => {
 });
 
 router.post("/admin/retry", async (req, res) => {
-  if (!isAdmin(req)) { res.status(401).end(); return; }
+  if (!isAdmin(req, res)) { res.status(401).end(); return; }
   try {
     await submitOrderToPrintify(String(req.body?.sessionId ?? ""));
     res.json({ ok: true });
